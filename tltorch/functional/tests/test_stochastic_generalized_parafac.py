@@ -1,8 +1,9 @@
 from .._stochastic_generalized_parafac import stochastic_generalized_parafac, stochastic_gradient, Stochastic_GCP
+import tensorly as tl
+tl.set_backend('pytorch')
 from tensorly.testing import assert_, assert_class_wrapper_correctly_passes_arguments
 from tensorly.cp_tensor import cp_to_tensor
 from tensorly.random import random_cp
-import tensorly as tl
 from ...utils import loss_operator
 
 

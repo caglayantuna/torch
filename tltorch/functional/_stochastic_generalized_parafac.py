@@ -1,6 +1,8 @@
 import numpy as np
 from tensorly.decomposition._base_decomposition import DecompositionMixin
 import tensorly as tl
+tl.set_backend('pytorch')
+from tensorly.random import random_cp
 from tensorly.cp_tensor import CPTensor, validate_cp_rank
 from tensorly.decomposition._cp import sample_khatri_rao
 from ..utils import loss_operator, gradient_operator
@@ -11,11 +13,6 @@ def initialize_generalized_parafac(tensor, rank, init='random', svd='numpy_svd',
 
     Parameters
     ----------
-    The type of initialization is def initialize_generalized_parafac(tensor, rank, init='random', svd='numpy_svd', loss='gaussian', random_state=None):
-    r"""Initialize factors used in `generalized parafac`.
-
-    Parameters
-    ----------
     The type of initialization is set using `init`. If `init == 'random'` then
     initialize factor matrices with uniform distribution using `random_state`. If `init == 'svd'` then
     initialize the `m`th factor matrix using the `rank` left singular vectors
@@ -86,152 +83,6 @@ def initialize_generalized_parafac(tensor, rank, init='random', svd='numpy_svd',
     if loss == 'gamma' or loss == 'rayleigh' or loss == 'poisson_count' or loss == 'bernoulli_odds':
         kt.factors = [tl.abs(f) for f in kt[1]]
     return kt
-set using `init`. If `init == 'random'` then
-    initialize factor matrices with uniform distribution using `random_state`. If `init == 'svd'` then
-    initialize the `m`th factor matrix using the `rank` left singular vectors
-    of the `m`th unfolding of the input tensor. If init is a previously initialized `cp tensor`, all
-    the weights are pulled in the last factor and then the weights are set to "1" for the output tensor.
-
-    Parameters
-    ----------
-    tensor : ndarray
-    rank : int, number of componendef initialize_generalized_parafac(tensor, rank, init='random', svd='numpy_svd', loss='gaussian', random_state=None):
-    r"""Initialize factors used in `generalized parafac`.
-
-    Parameters
-    ----------
-    The type of initialization is set using `init`. If `init == 'random'` then
-    initialize factor matrices with uniform distribution using `random_state`. If `init == 'svd'` then
-    initialize the `m`th factor matrix using the `rank` left singular vectors
-    of the `m`th unfolding of the input tensor. If init is a previously initialized `cp tensor`, all
-    the weights are pulled in the last factor and then the weights are set to "1" for the output tensor.
-
-    Parameters
-    ----------
-    tensor : ndarray
-    rank : int, number of components in the CP decomposition
-    init : {'svd', 'random', cptensor}, optional
-    svd : str, default is 'numpy_svd'
-        function to use to compute the SVD, acceptable values in tensorly.SVD_FUNS
-    loss : {'gaussian', 'gamma', 'rayleigh', 'poisson_count', 'poisson_log', 'bernoulli_odds', 'bernoulli_log'}
-        Some loss functions require positive factors, which is enforced by clipping
-    random_state : {None, int, np.random.RandomState}
-    Returns
-    -------
-    factors : CPTensor
-        An initial cp tensor.
-    """
-    rng = tl.check_random_state(random_state)
-    if init == 'random':
-        kt = random_cp(tl.shape(tensor), rank, random_state=rng, normalise_factors=False, **tl.context(tensor))
-
-    elif init == 'svd':
-        try:
-            svd_fun = tl.SVD_FUNS[svd]
-        except KeyError:
-            message = 'Got svd={}. However, for the current backend ({}), the possible choices are {}'.format(
-                      svd, tl.get_backend(), tl.SVD_FUNS)
-            raise ValueError(message)
-
-        factors = []
-        for mode in range(tl.ndim(tensor)):
-            U, S, _ = svd_fun(tl.unfold(tensor, mode), n_eigenvecs=rank)
-
-            # Put SVD initialization on the same scaling as the tensor in case normalize_factors=False
-            if mode == 0:
-                idx = min(rank, tl.shape(S)[0])
-                U = tl.index_update(U, tl.index[:, :idx], U[:, :idx] * S[:idx])
-
-            if tensor.shape[mode] < rank:
-                random_part = tl.tensor(rng.random_sample((U.shape[0], rank - tl.shape(tensor)[mode])), **tl.context(tensor))
-                U = tl.concatenate([U, random_part], axis=1)
-
-            factors.append(U[:, :rank])
-        kt = CPTensor((None, factors))
-    elif isinstance(init, (tuple, list, CPTensor)):
-        try:
-            weights, factors = CPTensor(init)
-
-            if tl.all(weights == 1):
-                weights, factors = CPTensor((None, factors))
-            else:
-                weights_avg = tl.prod(weights) ** (1.0 / tl.shape(weights)[0])
-                for i in range(len(factors)):
-                    factors[i] = factors[i] * weights_avg
-            kt = CPTensor((None, factors))
-            return kt
-        except ValueError:
-            raise ValueError(
-                'If initialization method is a mapping, then it must '
-                'be possible to convert it to a CPTensor instance'
-            )
-    else:
-        raise ValueError('Initialization method "{}" not recognized'.format(init))
-    if loss == 'gamma' or loss == 'rayleigh' or loss == 'poisson_count' or loss == 'bernoulli_odds':
-        kt.factors = [tl.abs(f) for f in kt[1]]
-    return kt
-ts in the CP decomposition
-    init : {'svd', 'random', cptensor}, optional
-    svd : str, default is 'numpy_svd'
-        function to use to compute the SVD, acceptable values in tensorly.SVD_FUNS
-    loss : {'gaussian', 'gamma', 'rayleigh', 'poisson_count', 'poisson_log', 'bernoulli_odds', 'bernoulli_log'}
-        Some loss functions require positive factors, which is enforced by clipping
-    random_state : {None, int, np.random.RandomState}
-    Returns
-    -------
-    factors : CPTensor
-        An initial cp tensor.
-    """
-    rng = tl.check_random_state(random_state)
-    if init == 'random':
-        kt = random_cp(tl.shape(tensor), rank, random_state=rng, normalise_factors=False, **tl.context(tensor))
-
-    elif init == 'svd':
-        try:
-            svd_fun = tl.SVD_FUNS[svd]
-        except KeyError:
-            message = 'Got svd={}. However, for the current backend ({}), the possible choices are {}'.format(
-                      svd, tl.get_backend(), tl.SVD_FUNS)
-            raise ValueError(message)
-
-        factors = []
-        for mode in range(tl.ndim(tensor)):
-            U, S, _ = svd_fun(tl.unfold(tensor, mode), n_eigenvecs=rank)
-
-            # Put SVD initialization on the same scaling as the tensor in case normalize_factors=False
-            if mode == 0:
-                idx = min(rank, tl.shape(S)[0])
-                U = tl.index_update(U, tl.index[:, :idx], U[:, :idx] * S[:idx])
-
-            if tensor.shape[mode] < rank:
-                random_part = tl.tensor(rng.random_sample((U.shape[0], rank - tl.shape(tensor)[mode])), **tl.context(tensor))
-                U = tl.concatenate([U, random_part], axis=1)
-
-            factors.append(U[:, :rank])
-        kt = CPTensor((None, factors))
-    elif isinstance(init, (tuple, list, CPTensor)):
-        try:
-            weights, factors = CPTensor(init)
-
-            if tl.all(weights == 1):
-                weights, factors = CPTensor((None, factors))
-            else:
-                weights_avg = tl.prod(weights) ** (1.0 / tl.shape(weights)[0])
-                for i in range(len(factors)):
-                    factors[i] = factors[i] * weights_avg
-            kt = CPTensor((None, factors))
-            return kt
-        except ValueError:
-            raise ValueError(
-                'If initialization method is a mapping, then it must '
-                'be possible to convert it to a CPTensor instance'
-            )
-    else:
-        raise ValueError('Initialization method "{}" not recognized'.format(init))
-    if loss == 'gamma' or loss == 'rayleigh' or loss == 'poisson_count' or loss == 'bernoulli_odds':
-        kt.factors = [tl.abs(f) for f in kt[1]]
-    return kt
-
 
 
 def stochastic_gradient(tensor, factors, batch_size, loss='gaussian', random_state=None, mask=None):
