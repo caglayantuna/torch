@@ -8,7 +8,7 @@ from tensorly.decomposition._cp import sample_khatri_rao
 from ..utils import loss_operator, gradient_operator
 
 
-def initialize_generalized_parafac(tensor, rank, init='random', svd='numpy_svd', loss='gaussian', random_state=None):
+def initialize_generalized_parafac(tensor, rank, init='random', svd='numpy_svd', non_negative=False, random_state=None):
     r"""Initialize factors used in `generalized parafac`.
 
     Parameters
@@ -80,7 +80,7 @@ def initialize_generalized_parafac(tensor, rank, init='random', svd='numpy_svd',
             )
     else:
         raise ValueError('Initialization method "{}" not recognized'.format(init))
-    if loss == 'gamma' or loss == 'rayleigh' or loss == 'poisson_count' or loss == 'bernoulli_odds':
+    if non_negative:
         kt.factors = [tl.abs(f) for f in kt[1]]
     return kt
 
@@ -205,58 +205,35 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
     rng = tl.check_random_state(random_state)
     rec_errors = []
     modes = [mode for mode in range(tl.ndim(tensor))]
+
+    if loss == 'gamma' or loss == 'rayleigh' or loss == 'poisson_count' or loss == 'bernoulli_odds':
+        non_negative = True
+    else:
+        non_negative = False
+
     # initial tensor
-    _, factors = initialize_generalized_parafac(tensor, rank, init=init, loss=loss, random_state=rng)
+    _, factors = initialize_generalized_parafac(tensor, rank, init=init, non_negative=non_negative, random_state=rng)
     # parameters for ADAM optimization
     momentum_first = []
     momentum_second = []
     t_iter = 1
-    indices_tuple = tuple([rng.randint(0, tl.shape(f)[0], size=batch_size, dtype=int) for f in factors])
-    if mask is not None:
-        current_loss = loss_operator(tensor[indices_tuple],
-                                     tl.sum(sample_khatri_rao(factors, indices_list=indices_tuple, n_samples=batch_size)[0],
-                                            axis=1), loss=loss, mask=mask[indices_tuple])
-    else:
-        current_loss = loss_operator(tensor[indices_tuple],
-                                     tl.sum(sample_khatri_rao(factors, indices_list=indices_tuple, n_samples=batch_size)[0],
-                                            axis=1), loss=loss)
+
     # global loss
     current_loss = tl.sum(current_loss)
-    for i in modes:
-        momentum_first.append(tl.zeros(tl.shape(factors[i])))
-        momentum_second.append(tl.zeros(tl.shape(factors[i])))
-    epsilon = 1e-8
-    bad_epochs = 0
-    max_bad_epochs = 20
-    for epoch in range(epochs):
-        loss_old = tl.copy(current_loss)
-        factors_old = [tl.copy(f) for f in factors]
-        momentum_first_old = [tl.copy(f) for f in momentum_first]
-        momentum_second_old = [tl.copy(f) for f in momentum_second]
-        for iteration in range(n_iter_max):
-            gradient = stochastic_gradient(tensor, factors, batch_size, random_state=rng, loss=loss)
-            for mode in modes:
-                # adam optimization
-                momentum_first[mode] = (beta_1 * momentum_first[mode]) + (1 - beta_1) * gradient[mode]
-                momentum_second[mode] = beta_2 * momentum_second[mode] + (1 - beta_2) * (gradient[mode] ** 2)
-                momentum_first_hat = momentum_first[mode] / (1 - (beta_1 ** t_iter))
-                momentum_second_hat = momentum_second[mode] / (1 - (beta_2 ** t_iter))
-                factors[mode] = factors[mode] - lr * momentum_first_hat / (tl.sqrt(momentum_second_hat) + epsilon)
+    x0 = tl.copy(factors)
+    x0.requires_grad = True
+    optimizer = torch.optim.Adam([x0])
+    error = []
+    for i in range(n_iter_max):
+        optimizer.zero_grad()
+        objective = loss(x0)
+        objective.backward()
+        optimizer.step(lambda: tl.sum(loss(x0)))
+        if non_negative:
+            with torch.no_grad():
+                x0.data = x0.data.clamp(min=0)
+        error.append(objective.item() / norm)
 
-                if loss == 'gamma' or loss == 'rayleigh' or loss == 'poisson_count' or loss == 'bernoulli_odds':
-                    factors[mode] = tl.clip(factors[mode], 0)
-
-            t_iter += 1
-        # Compute the current error
-        if mask is not None:
-            current_loss = loss_operator(tensor[indices_tuple],
-                                         tl.sum(sample_khatri_rao(factors, indices_list=indices_tuple, n_samples=batch_size)[0],
-                                         axis=1), loss=loss, mask=mask[indices_tuple])
-        else:
-            current_loss = loss_operator(tensor[indices_tuple],
-                                         tl.sum(sample_khatri_rao(factors, indices_list=indices_tuple, n_samples=batch_size)[0],
-                                         axis=1), loss=loss)
-        # global loss
         current_loss = tl.sum(current_loss)
         if current_loss >= loss_old:
             lr = lr / 10
@@ -268,11 +245,7 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
             bad_epochs += 1
         else:
             bad_epochs = 0
-        rec_error = current_loss / tl.norm(tensor)
-        rec_errors.append(rec_error)
-        if bad_epochs >= max_bad_epochs:
-            print("Sufficient number of bad epochs")
-            break
+
     cp_tensor = CPTensor((None, factors))
     if return_errors:
         return cp_tensor, rec_errors
