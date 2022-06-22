@@ -1,5 +1,7 @@
 import numpy as np
 from tensorly.decomposition._base_decomposition import DecompositionMixin
+import torch
+from torch.optim import Adam
 import tensorly as tl
 tl.set_backend('pytorch')
 from tensorly.random import random_cp
@@ -137,6 +139,154 @@ def stochastic_gradient(tensor, factors, batch_size, loss='gaussian', random_sta
                                          tl.transpose(tl.dot(tl.transpose(sampled_kr), gradient_tensor))[indice_list_mode, :])
     return gradient
 
+def vectorize_factors(factors):
+    """
+    Vectorizes each factor in factors, then concatenates them to return one vector.
+
+    Parameters
+    ----------
+    factors : list of ndarray
+
+    Returns
+    -------
+    vectorized_factors: vector
+    """
+    vectorized_factors = []
+    for i in range(len(factors)):
+        vectorized_factors.append(tl.tensor_to_vec(factors[i]))
+    vectorized_factors = tl.concatenate(vectorized_factors, axis=0)
+    return vectorized_factors
+
+
+def vectorized_factors_to_tensor(vectorized_factors, shape, rank, mask=None, return_factors=False):
+    """
+    Transforms vectorized factors of a CP decomposition into a reconstructed full tensor.
+
+    Parameters
+    ----------
+    vectorized_factors : 1d array, a vector of length :math:`\prod(shape) * rank^{len(shape)}`
+    shape : tuple, contains the row dimensions of the factors
+    rank : int, number of components in the CP decomposition
+    mask : ndarray
+        array of booleans with the same shape as ``tensor`` should be 0 where
+        the values are missing and 1 everywhere else.
+    return_factors : bool, if True returns factors list instead of full tensor
+        Default: False
+
+    Returns
+    -------
+    tensor: ndarray or list of ndarrays
+    """
+    n_factors = len(shape)
+    factors = []
+
+    cursor = 0
+    for i in range(n_factors):
+        factors.append(tl.reshape(vectorized_factors[cursor: cursor + shape[i] * rank], [shape[i], rank]))
+        cursor += shape[i] * rank
+
+    if return_factors:
+        return CPTensor((None, factors))
+    else:
+        if mask is not None:
+            return tl.cp_to_tensor((None, factors)) * mask
+        else:
+            return tl.cp_to_tensor((None, factors))
+
+
+def vectorized_mttkrp(tensor, vectorized_factors, rank):
+    """
+    Computes the Matricized Tensor Times Khatri-Rao Product (MTTKRP) for
+    all modes between a tensor and vectorized factors. Returns a vectorized stack of MTTKRPs.
+
+    Parameters
+    ----------
+    tensor : ndarray, data tensor
+    vectorized_factors : 1d array, factors of the CP decomposition stored in one vector
+    rank : int, number of components in the CP decomposition
+
+    Returns
+    -------
+    vectorized_mttkrp :
+        vector of length vectorized_factors containing the mttkrp for all modes
+    """
+    _, factors = vectorized_factors_to_tensor(vectorized_factors, tl.shape(tensor), rank, return_factors=True)
+    all_mttkrp = []
+    for i in range(len(factors)):
+        all_mttkrp.append(tl.tensor_to_vec(unfolding_dot_khatri_rao(tensor, (None, factors), i)))
+    return tl.concatenate(all_mttkrp, axis=0)
+
+
+def loss_operator_func(tensor, rank, loss, mask=None):
+    """
+    Various loss functions for generalized parafac decomposition, see [1] for more details.
+    The returned function maps a vectorized factors input x to the loss :math:`1/len(x) * L(T,x)`
+    where L is the maximum likelihood estimator when tensor is generated from x using one of the following distributions:
+
+    * Gaussian
+    * Gamma
+    * Rayleigh
+    * Poisson (count or log)
+    * Bernoulli (odds or log)
+
+    Parameters
+    ----------
+    tensor : ndarray, input tensor data
+    rank : int, number of components in the CP decomposition
+    loss : string, choices are {'gaussian', 'gamma', 'rayleigh', 'poisson_count', 'poisson_log', 'bernoulli_odds', 'bernoulli_log'}
+    mask : ndarray
+        array of booleans with the same shape as ``tensor`` should be 0 where
+        the values are missing and 1 everywhere else.
+
+    Returns
+    -------
+    function to compute loss
+        Size based normalized loss for each entry
+
+    References
+    ----------
+    .. [1] Hong, D., Kolda, T. G., & Duersch, J. A. (2020).
+           Generalized canonical polyadic tensor decomposition. SIAM Review, 62(1), 133-163.
+    """
+    shape = tl.shape(tensor)
+    size = tl.prod(tl.tensor(shape, **tl.context(tensor)))
+    epsilon = 1e-8
+
+    if loss == 'gaussian':
+        return lambda x: tl.sum((tensor - vectorized_factors_to_tensor(x, shape, rank, mask)) ** 2) / size
+    elif loss == 'bernoulli_odds':
+        def func(x):
+            est = vectorized_factors_to_tensor(x, shape, rank, mask)
+            return tl.sum(tl.log(est + 1) - (tensor * tl.log(est + epsilon))) / size
+        return func
+    elif loss == 'bernoulli_logit':
+        def func(x):
+            est = vectorized_factors_to_tensor(x, shape, rank, mask)
+            return tl.sum(tl.log(tl.exp(est) + 1) - (tensor * est)) / size
+        return func
+    elif loss == 'rayleigh':
+        def func(x):
+            est = vectorized_factors_to_tensor(x, shape, rank, mask)
+            return tl.sum(2 * tl.log(est + epsilon) + (math.pi / 4) * ((tensor / (est + epsilon)) ** 2)) / size
+        return func
+    elif loss == 'poisson_count':
+        def func(x):
+            est = vectorized_factors_to_tensor(x, shape, rank, mask)
+            return tl.sum(est - tensor * tl.log(est + epsilon)) / size
+        return func
+    elif loss == 'poisson_log':
+        def func(x):
+            est = vectorized_factors_to_tensor(x, shape, rank, mask)
+            return tl.sum(tl.exp(est) - (tensor * est)) / size
+        return func
+    elif loss == 'gamma':
+        def func(x):
+            est = vectorized_factors_to_tensor(x, shape, rank, mask)
+            return tl.sum(tensor / (est + epsilon) + tl.log(est + epsilon)) / size
+        return func
+    else:
+        raise ValueError('Loss "{}" not recognized'.format(loss))
+
 
 def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random', return_errors=False,
                                    loss='gaussian', epochs=20, batch_size=200, lr=0.01, beta_1=0.9, beta_2=0.999,
@@ -213,16 +363,17 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
 
     # initial tensor
     _, factors = initialize_generalized_parafac(tensor, rank, init=init, non_negative=non_negative, random_state=rng)
-    # parameters for ADAM optimization
-    momentum_first = []
-    momentum_second = []
-    t_iter = 1
 
-    # global loss
-    current_loss = tl.sum(current_loss)
-    x0 = tl.copy(factors)
+    if loss is not None:
+        loss = loss_operator_func(tensor, rank, loss=loss, mask=mask)
+        # fun_gradient = gradient_operator_func(tensor, rank, loss=loss, mask=mask)
+
+    # gradient = stochastic_gradient(tensor, factors, batch_size, random_state=rng, loss=loss)
+    vectorized_factors = vectorize_factors(factors)
+    norm = tl.norm(tensor, 2)
+    x0 = tl.copy(vectorized_factors)
     x0.requires_grad = True
-    optimizer = torch.optim.Adam([x0])
+    optimizer = Adam([x0])
     error = []
     for i in range(n_iter_max):
         optimizer.zero_grad()
@@ -234,21 +385,11 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
                 x0.data = x0.data.clamp(min=0)
         error.append(objective.item() / norm)
 
-        current_loss = tl.sum(current_loss)
-        if current_loss >= loss_old:
-            lr = lr / 10
-            factors = [tl.copy(f) for f in factors_old]
-            current_loss = tl.copy(loss_old)
-            t_iter -= iteration
-            momentum_first = [tl.copy(f) for f in momentum_first_old]
-            momentum_second = [tl.copy(f) for f in momentum_second_old]
-            bad_epochs += 1
-        else:
-            bad_epochs = 0
+    _, factors = vectorized_factors_to_tensor(vectorized_factors, tl.shape(tensor), rank, return_factors=True)
 
     cp_tensor = CPTensor((None, factors))
     if return_errors:
-        return cp_tensor, rec_errors
+        return cp_tensor, error
     else:
         return cp_tensor
 
