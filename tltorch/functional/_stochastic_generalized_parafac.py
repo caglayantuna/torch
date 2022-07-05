@@ -218,7 +218,7 @@ def vectorized_mttkrp(tensor, vectorized_factors, rank):
     return tl.concatenate(all_mttkrp, axis=0)
 
 
-def loss_operator_func(tensor, rank, loss, mask=None):
+def loss_operator_func(tensor, rank, loss, batch_size=None, mask=None):
     """
     Various loss functions for generalized parafac decomposition, see [1] for more details.
     The returned function maps a vectorized factors input x to the loss :math:`1/len(x) * L(T,x)`
@@ -252,41 +252,49 @@ def loss_operator_func(tensor, rank, loss, mask=None):
     shape = tl.shape(tensor)
     size = tl.prod(tl.tensor(shape, **tl.context(tensor)))
     epsilon = 1e-8
+    rng = tl.check_random_state(None)
 
     if loss == 'gaussian':
         def func(x):
+            indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum((tensor - est) ** 2) / size
+            return tl.sum((tensor[indices_tuple] - est[indices_tuple]) ** 2) / size
         return func
     elif loss == 'bernoulli_odds':
         def func(x):
+            indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(tl.log(est + 1) - (tensor * tl.log(est + epsilon))) / size
+            return tl.sum(tl.log(est[indices_tuple] + 1) - (tensor[indices_tuple] * tl.log(est[indices_tuple] + epsilon))) / size
         return func
     elif loss == 'bernoulli_logit':
         def func(x):
+            indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(tl.log(tl.exp(est) + 1) - (tensor * est)) / size
+            return tl.sum(tl.log(tl.exp(est[indices_tuple]) + 1) - (tensor[indices_tuple] * est[indices_tuple])) / size
         return func
     elif loss == 'rayleigh':
         def func(x):
+            indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(2 * tl.log(est + epsilon) + (math.pi / 4) * ((tensor / (est + epsilon)) ** 2)) / size
+            return tl.sum(2 * tl.log(est[indices_tuple] + epsilon) + (math.pi / 4) * ((tensor[indices_tuple] / (est[indices_tuple] + epsilon)) ** 2)) / size
         return func
     elif loss == 'poisson_count':
         def func(x):
+            indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(est - tensor * tl.log(est + epsilon)) / size
+            return tl.sum(est[indices_tuple] - tensor[indices_tuple] * tl.log(est[indices_tuple] + epsilon)) / size
         return func
     elif loss == 'poisson_log':
         def func(x):
+            indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(tl.exp(est) - (tensor * est)) / size
+            return tl.sum(tl.exp(est[indices_tuple]) - (tensor[indices_tuple] * est[indices_tuple])) / size
         return func
     elif loss == 'gamma':
         def func(x):
+            indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(tensor / (est + epsilon) + tl.log(est + epsilon)) / size
+            return tl.sum(tensor[indices_tuple] / (est[indices_tuple] + epsilon) + tl.log(est[indices_tuple] + epsilon)) / size
         return func
     else:
         raise ValueError('Loss "{}" not recognized'.format(loss))
@@ -369,10 +377,9 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
     _, factors = initialize_generalized_parafac(tensor, rank, init=init, non_negative=non_negative, random_state=rng)
 
     if loss is not None:
-        loss = loss_operator_func(tensor, rank, loss=loss, mask=mask)
+        loss = loss_operator_func(tensor, rank, loss=loss,batch_size=batch_size, mask=mask)
         # fun_gradient = gradient_operator_func(tensor, rank, loss=loss, mask=mask)
 
-    # gradient = stochastic_gradient(tensor, factors, batch_size, random_state=rng, loss=loss)
     vectorized_factors = vectorize_factors(factors)
     norm = tl.norm(tensor, 2)
     x0 = tl.copy(vectorized_factors)
@@ -380,6 +387,7 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
     optimizer = Adam([x0])
     error = []
     for i in range(n_iter_max):
+        #gradient = stochastic_gradient(tensor, factors, batch_size, random_state=rng, loss=loss)
         optimizer.zero_grad()
         objective = loss(x0)
         objective.backward()
@@ -396,6 +404,7 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
         return cp_tensor, error
     else:
         return cp_tensor
+
 
 def stochastic_generalized_parafac_2(tensor, rank, n_iter_max=1000, init='random', return_errors=False,
                                    loss='gaussian', epochs=20, batch_size=200, lr=0.01, beta_1=0.9, beta_2=0.999,
