@@ -219,7 +219,14 @@ def vectorized_mttkrp(tensor, vectorized_factors, rank):
     return tl.concatenate(all_mttkrp, axis=0)
 
 
-def loss_operator_func(tensor, rank, loss, batch_size=None, mask=None):
+def vectorize_list_tensors(tensors):
+    vec_tensors = []
+    for i in range(len(tensors)):
+        vec_tensors.append(tl.tensor_to_vec(tensors[i]))
+    return tl.concatenate(vec_tensors, axis=0)
+
+
+def loss_operator_func(tensor, rank, loss, batch_size=None, mask=None, return_gradient=False):
     """
     Various loss functions for generalized parafac decomposition, see [1] for more details.
     The returned function maps a vectorized factors input x to the loss :math:`1/len(x) * L(T,x)`
@@ -256,46 +263,102 @@ def loss_operator_func(tensor, rank, loss, batch_size=None, mask=None):
     rng = tl.check_random_state(None)
 
     if loss == 'gaussian':
-        def func(x):
+        def func(x, return_gradient=False):
             indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum((tensor[indices_tuple] - est[indices_tuple]) ** 2) / batch_size
+            loss_value = tl.sum((tensor[indices_tuple] - est[indices_tuple]) ** 2) / batch_size
+            if return_gradient:
+                _, factors_new = vectorized_factors_to_tensor(x, shape, rank, return_factors=True)
+                gradient = stochastic_gradient(tensor, factors_new, batch_size, indices_tuple=indices_tuple,
+                                               random_state=rng, loss=loss)
+                gradient = vectorize_list_tensors(gradient)
+                return gradient / batch_size
+            else:
+                return loss_value
         return func
     elif loss == 'bernoulli_odds':
-        def func(x):
+        def func(x, return_gradient=return_gradient):
             indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(tl.log(est[indices_tuple] + 1) - (tensor[indices_tuple] * tl.log(est[indices_tuple] + epsilon))) / batch_size
+            loss_value = tl.sum(tl.log(est[indices_tuple] + 1) - (tensor[indices_tuple] * tl.log(est[indices_tuple] + epsilon))) / batch_size
+            if return_gradient:
+                _, factors_new = vectorized_factors_to_tensor(x, shape, rank, return_factors=True)
+                gradient = stochastic_gradient(tensor, factors_new, batch_size, indices_tuple=indices_tuple,
+                                               random_state=rng, loss=loss)
+                gradient = vectorize_list_tensors(gradient)
+                return gradient / batch_size
+            else:
+                return loss_value
         return func
     elif loss == 'bernoulli_logit':
-        def func(x):
+        def func(x, return_gradient=return_gradient):
             indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(tl.log(tl.exp(est[indices_tuple]) + 1) - (tensor[indices_tuple] * est[indices_tuple])) / batch_size
+            loss_value = tl.sum(tl.log(tl.exp(est[indices_tuple]) + 1) - (tensor[indices_tuple] * est[indices_tuple])) / batch_size
+            if return_gradient:
+                _, factors_new = vectorized_factors_to_tensor(x, shape, rank, return_factors=True)
+                gradient = stochastic_gradient(tensor, factors_new, batch_size, indices_tuple=indices_tuple,
+                                               random_state=rng, loss=loss)
+                gradient = vectorize_list_tensors(gradient)
+                return gradient / batch_size
+            else:
+                return loss_value
         return func
     elif loss == 'rayleigh':
-        def func(x):
+        def func(x, return_gradient=return_gradient):
             indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(2 * tl.log(est[indices_tuple] + epsilon) + (math.pi / 4) * ((tensor[indices_tuple] / (est[indices_tuple] + epsilon)) ** 2)) / batch_size
+            loss_value = tl.sum(2 * tl.log(est[indices_tuple] + epsilon) + (math.pi / 4) * ((tensor[indices_tuple] / (est[indices_tuple] + epsilon)) ** 2)) / batch_size
+            if return_gradient:
+                _, factors_new = vectorized_factors_to_tensor(x, shape, rank, return_factors=True)
+                gradient = stochastic_gradient(tensor, factors_new, batch_size, indices_tuple=indices_tuple,
+                                               random_state=rng, loss=loss)
+                gradient = vectorize_list_tensors(gradient)
+                return gradient / batch_size
+            else:
+                return loss_value
         return func
     elif loss == 'poisson_count':
-        def func(x):
+        def func(x, return_gradient=return_gradient):
             indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(est[indices_tuple] - tensor[indices_tuple] * tl.log(est[indices_tuple] + epsilon)) / batch_size
+            loss_value = tl.sum(est[indices_tuple] - tensor[indices_tuple] * tl.log(est[indices_tuple] + epsilon)) / batch_size
+            if return_gradient:
+                _, factors_new = vectorized_factors_to_tensor(x, shape, rank, return_factors=True)
+                gradient = stochastic_gradient(tensor, factors_new, batch_size, indices_tuple=indices_tuple,
+                                               random_state=rng, loss=loss)
+                gradient = vectorize_list_tensors(gradient)
+                return gradient / batch_size
+            else:
+                return loss_value
         return func
     elif loss == 'poisson_log':
-        def func(x):
+        def func(x, return_gradient=False):
             indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(tl.exp(est[indices_tuple]) - (tensor[indices_tuple] * est[indices_tuple])) / batch_size
+            loss_value = tl.sum(tl.exp(est[indices_tuple]) - (tensor[indices_tuple] * est[indices_tuple])) / batch_size
+            if return_gradient:
+                _, factors_new = vectorized_factors_to_tensor(x, shape, rank, return_factors=True)
+                gradient = stochastic_gradient(tensor, factors_new, batch_size, indices_tuple=indices_tuple,
+                                               random_state=rng, loss=loss)
+                gradient = vectorize_list_tensors(gradient)
+                return gradient / batch_size
+            else:
+                return loss_value
         return func
     elif loss == 'gamma':
-        def func(x):
+        def func(x, return_gradient=False):
             indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
             est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            return tl.sum(tensor[indices_tuple] / (est[indices_tuple] + epsilon) + tl.log(est[indices_tuple] + epsilon)) / batch_size
+            loss_value = tl.sum(tensor[indices_tuple] / (est[indices_tuple] + epsilon) + tl.log(est[indices_tuple] + epsilon)) / batch_size
+            if return_gradient:
+                _, factors_new = vectorized_factors_to_tensor(x, shape, rank, return_factors=True)
+                gradient = stochastic_gradient(tensor, factors_new, batch_size, indices_tuple=indices_tuple,
+                                               random_state=rng, loss=loss)
+                gradient = vectorize_list_tensors(gradient)
+                return gradient / batch_size
+            else:
+                return loss_value
         return func
     else:
         raise ValueError('Loss "{}" not recognized'.format(loss))
@@ -378,7 +441,7 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
     _, factors = initialize_generalized_parafac(tensor, rank, init=init, non_negative=non_negative, random_state=rng)
 
     if loss is not None:
-        loss = loss_operator_func(tensor, rank, loss=loss,batch_size=batch_size, mask=mask)
+        loss = loss_operator_func(tensor, rank, loss=loss, batch_size=batch_size, mask=mask)
         # fun_gradient = gradient_operator_func(tensor, rank, loss=loss, mask=mask)
 
     vectorized_factors = vectorize_factors(factors)
@@ -388,11 +451,9 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
     optimizer = Adam([x0])
     error = []
     for i in range(n_iter_max):
-        #gradient = stochastic_gradient(tensor, factors, batch_size, random_state=rng, loss=loss)
         optimizer.zero_grad()
         objective = loss(x0)
         objective.backward()
-        #optimizer.step(lambda: tl.sum(loss(x0)))
         optimizer.step()
         if non_negative:
             with torch.no_grad():
@@ -475,7 +536,7 @@ def stochastic_generalized_parafac_2(tensor, rank, n_iter_max=1000, init='random
     rng = tl.check_random_state(random_state)
     rec_errors = []
     modes = [mode for mode in range(tl.ndim(tensor))]
-    # initial tensor
+
     if loss == 'gamma' or loss == 'rayleigh' or loss == 'poisson_count' or loss == 'bernoulli_odds':
         non_negative = True
     else:
@@ -483,75 +544,33 @@ def stochastic_generalized_parafac_2(tensor, rank, n_iter_max=1000, init='random
 
     # initial tensor
     _, factors = initialize_generalized_parafac(tensor, rank, init=init, non_negative=non_negative, random_state=rng)
-    # parameters for ADAM optimization
-    momentum_first = []
-    momentum_second = []
-    t_iter = 1
-    indices_tuple = tuple([rng.randint(0, tl.shape(f)[0], size=batch_size, dtype=int) for f in factors])
-    if mask is not None:
-        current_loss = loss_operator(tensor[indices_tuple],
-                                     tl.sum(sample_khatri_rao(factors, indices_list=indices_tuple, n_samples=batch_size)[0],
-                                            axis=1), loss=loss, mask=mask[indices_tuple])
-    else:
-        current_loss = loss_operator(tensor[indices_tuple],
-                                     tl.sum(sample_khatri_rao(factors, indices_list=indices_tuple, n_samples=batch_size)[0],
-                                            axis=1), loss=loss)
-    # global loss
-    current_loss = tl.sum(current_loss)
-    for i in modes:
-        momentum_first.append(tl.zeros(tl.shape(factors[i])))
-        momentum_second.append(tl.zeros(tl.shape(factors[i])))
-    epsilon = 1e-8
-    bad_epochs = 0
-    max_bad_epochs = 20
-    for epoch in range(epochs):
-        loss_old = tl.copy(current_loss)
-        factors_old = [tl.copy(f) for f in factors]
-        momentum_first_old = [tl.copy(f) for f in momentum_first]
-        momentum_second_old = [tl.copy(f) for f in momentum_second]
-        for iteration in range(n_iter_max):
-            gradient = stochastic_gradient(tensor, factors, batch_size, random_state=rng, loss=loss)
-            for mode in modes:
-                # adam optimization
-                momentum_first[mode] = (beta_1 * momentum_first[mode]) + (1 - beta_1) * gradient[mode]
-                momentum_second[mode] = beta_2 * momentum_second[mode] + (1 - beta_2) * (gradient[mode] ** 2)
-                momentum_first_hat = momentum_first[mode] / (1 - (beta_1 ** t_iter))
-                momentum_second_hat = momentum_second[mode] / (1 - (beta_2 ** t_iter))
-                factors[mode] = factors[mode] - lr * momentum_first_hat / (tl.sqrt(momentum_second_hat) + epsilon)
 
-                if loss == 'gamma' or loss == 'rayleigh' or loss == 'poisson_count' or loss == 'bernoulli_odds':
-                    factors[mode] = tl.clip(factors[mode], 0)
+    if loss is not None:
+        loss = loss_operator_func(tensor, rank, loss=loss,batch_size=batch_size, mask=mask)
+        # fun_gradient = gradient_operator_func(tensor, rank, loss=loss, mask=mask)
 
-            t_iter += 1
-        # Compute the current error
-        if mask is not None:
-            current_loss = loss_operator(tensor[indices_tuple],
-                                         tl.sum(sample_khatri_rao(factors, indices_list=indices_tuple, n_samples=batch_size)[0],
-                                         axis=1), loss=loss, mask=mask[indices_tuple])
-        else:
-            current_loss = loss_operator(tensor[indices_tuple],
-                                         tl.sum(sample_khatri_rao(factors, indices_list=indices_tuple, n_samples=batch_size)[0],
-                                         axis=1), loss=loss)
-        # global loss
-        current_loss = tl.sum(current_loss)
-        if current_loss >= loss_old:
-            lr = lr / 10
-            factors = [tl.copy(f) for f in factors_old]
-            current_loss = tl.copy(loss_old)
-            t_iter -= iteration
-            momentum_first = [tl.copy(f) for f in momentum_first_old]
-            momentum_second = [tl.copy(f) for f in momentum_second_old]
-            bad_epochs += 1
-        else:
-            bad_epochs = 0
-        rec_error = current_loss / tl.norm(tensor)
-        rec_errors.append(rec_error)
-        if bad_epochs >= max_bad_epochs:
-            print("Sufficient number of bad epochs")
-            break
+    vectorized_factors = vectorize_factors(factors)
+    norm = tl.norm(tensor, 2)
+    x0 = tl.copy(vectorized_factors)
+    x0.requires_grad = True
+    optimizer = Adam([x0])
+    error = []
+    for i in range(n_iter_max):
+        optimizer.zero_grad()
+        objective = loss(x0)
+        objective.backward()
+        x0.grad = loss(x0, return_gradient=True)
+        optimizer.step()
+        if non_negative:
+            with torch.no_grad():
+                x0.data = x0.data.clamp(min=0)
+        error.append(objective.item() / norm)
+
+    _, factors = vectorized_factors_to_tensor(vectorized_factors, tl.shape(tensor), rank, return_factors=True)
+
     cp_tensor = CPTensor((None, factors))
     if return_errors:
-        return cp_tensor, rec_errors
+        return cp_tensor, error
     else:
         return cp_tensor
 
