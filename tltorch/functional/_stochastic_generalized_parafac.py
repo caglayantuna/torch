@@ -448,7 +448,7 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
     norm = tl.norm(tensor, 2)
     x0 = tl.copy(vectorized_factors)
     x0.requires_grad = True
-    optimizer = Adam([x0])
+    optimizer = Adam([x0], lr=lr)
     error = []
     for i in range(n_iter_max):
         optimizer.zero_grad()
@@ -460,7 +460,7 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
                 x0.data = x0.data.clamp(min=0)
         error.append(objective.item() / norm)
 
-    _, factors = vectorized_factors_to_tensor(vectorized_factors, tl.shape(tensor), rank, return_factors=True)
+    _, factors = vectorized_factors_to_tensor(x0, tl.shape(tensor), rank, return_factors=True)
 
     cp_tensor = CPTensor((None, factors))
     if return_errors:
@@ -553,7 +553,7 @@ def stochastic_generalized_parafac_2(tensor, rank, n_iter_max=1000, init='random
     norm = tl.norm(tensor, 2)
     x0 = tl.copy(vectorized_factors)
     x0.requires_grad = True
-    optimizer = Adam([x0])
+    optimizer = Adam([x0], lr=lr)
     error = []
     for i in range(n_iter_max):
         optimizer.zero_grad()
@@ -566,7 +566,7 @@ def stochastic_generalized_parafac_2(tensor, rank, n_iter_max=1000, init='random
                 x0.data = x0.data.clamp(min=0)
         error.append(objective.item() / norm)
 
-    _, factors = vectorized_factors_to_tensor(vectorized_factors, tl.shape(tensor), rank, return_factors=True)
+    _, factors = vectorized_factors_to_tensor(x0, tl.shape(tensor), rank, return_factors=True)
 
     cp_tensor = CPTensor((None, factors))
     if return_errors:
