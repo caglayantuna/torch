@@ -314,7 +314,7 @@ def stochastic_generalized_parafac(tensor, rank, n_iter_max=1000, init='random',
                 x0.data = x0.data.clamp(min=0)
         error.append(objective.item() / norm)
 
-    _, factors = vectorized_factors_to_tensor(vectorized_factors, tl.shape(tensor), rank, return_factors=True)
+    _, factors = vectorized_factors_to_tensor(x0, tl.shape(tensor), rank, return_factors=True)
 
     cp_tensor = CPTensor((None, factors))
     if return_errors:
