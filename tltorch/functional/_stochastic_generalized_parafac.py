@@ -265,8 +265,12 @@ def loss_operator_func(tensor, rank, loss, batch_size=None, mask=None, return_gr
     if loss == 'gaussian':
         def func(x, return_gradient=False):
             indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
-            est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            loss_value = tl.sum((tensor[indices_tuple] - est[indices_tuple]) ** 2) / batch_size
+            indices_list = list(indices_tuple)
+            factors = vectorized_factors_to_tensor(x, shape, rank, mask, return_factors=True)[1]
+            est, _ = sample_khatri_rao(factors,
+                                       indices_list=indices_list[:len(shape)-1], n_samples=batch_size, skip_matrix=len(shape)-1)
+            est = tl.dot(est, tl.transpose(factors[len(shape)-1]))
+            loss_value = tl.sum((tensor[indices_tuple[:len(shape)-1]] - est) ** 2) / batch_size
             if return_gradient:
                 _, factors_new = vectorized_factors_to_tensor(x, shape, rank, return_factors=True)
                 gradient = stochastic_gradient(tensor, factors_new, batch_size, indices_tuple=indices_tuple,
@@ -349,8 +353,12 @@ def loss_operator_func(tensor, rank, loss, batch_size=None, mask=None, return_gr
     elif loss == 'gamma':
         def func(x, return_gradient=False):
             indices_tuple = tuple([rng.randint(0, shape[i], size=batch_size, dtype=int) for i in range(len(shape))])
-            est = vectorized_factors_to_tensor(x, shape, rank, mask)
-            loss_value = tl.sum(tensor[indices_tuple] / (est[indices_tuple] + epsilon) + tl.log(est[indices_tuple] + epsilon)) / batch_size
+            indices_list = list(indices_tuple)
+            factors = vectorized_factors_to_tensor(x, shape, rank, mask, return_factors=True)[1]
+            est, _ = sample_khatri_rao(factors,
+                                       indices_list=indices_list[:len(shape)-1], n_samples=batch_size, skip_matrix=len(shape)-1)
+            est = tl.dot(est, tl.transpose(factors[len(shape)-1]))
+            loss_value = tl.sum(tensor[indices_tuple[:len(shape)-1]] / (est + epsilon) + tl.log(est + epsilon)) / batch_size
             if return_gradient:
                 _, factors_new = vectorized_factors_to_tensor(x, shape, rank, return_factors=True)
                 gradient = stochastic_gradient(tensor, factors_new, batch_size, indices_tuple=indices_tuple,
